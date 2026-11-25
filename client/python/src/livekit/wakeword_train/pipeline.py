@@ -1,4 +1,5 @@
-"""The pipeline behind the CLI: `run_setup` (generate speech with livekit-wakeword-bench),
+"""The pipeline behind the CLI: `run_setup` (generate speech with livekit-wakeword-bench, spoken
+by ElevenLabs or LiveKit Inference),
 `run_train` (fine-tune the pretrained encoders, calibrate, export) and `run_eval`."""
 
 from __future__ import annotations
@@ -9,11 +10,16 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from .config import ModelType, WakeWordConfig, is_english
+from . import elevenlabs
+from .capture import capture_dir, capturing
+from .config import PLANS, ModelType, WakeWordConfig, is_english
+from .record import record_dir, record_requests
 
 logger = logging.getLogger(__name__)
 # share of training clips with overlapping talkers (party scenes); calibration keeps the plain mix
@@ -41,15 +47,28 @@ def check_environment(config: WakeWordConfig, require_gpu: bool = False) -> list
             import livekit_wakeword_bench  # noqa: F401
         except ImportError:
             problems.append("livekit-wakeword-bench is missing: `uv sync --extra train`")
+    recording = record_dir() is not None  # recording sends no TTS requests
+    if config.tts == "elevenlabs":
+        if elevenlabs.api_key() is None and not recording:
+            problems.append(
+                f"set {elevenlabs.ENV_KEY} (ElevenLabs TTS): create a key at "
+                "https://elevenlabs.io/app/settings/api-keys (with Text to Speech and Voices "
+                "read access), or use LiveKit Inference with `--tts livekit`"
+            )
+        if not elevenlabs.speaks(config.language):
+            problems.append(
+                f"no ElevenLabs model in this setup speaks {config.language!r}: use "
+                "`--tts livekit`, or add the model to `elevenlabs.MODELS`"
+            )
     missing = [
         k for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET") if not os.getenv(k)
     ]
-    if missing:
+    if config.tts == "livekit" and missing and not recording:
         problems.append(
             f"set {', '.join(missing)} (LiveKit Inference TTS): `lk cloud auth`, then "
             "`lk app env -w` writes them to .env.local"
         )
-    if config.concurrency is None and config.plan not in ("build", "ship", "scale"):
+    if config.tts == "livekit" and config.concurrency is None and config.plan not in PLANS:
         problems.append(
             f"unknown plan {config.plan!r}: use build / ship / scale, or set concurrency"
         )
@@ -154,6 +173,13 @@ def _generate(
 
     if config.concurrency:
         knobs["tts__concurrency"] = config.concurrency
+    elif config.tts == "elevenlabs":
+        knobs["tts__concurrency"] = elevenlabs.DEFAULT_CONCURRENCY
+    if config.skip_sources:  # the bench downloads every source unless told which to use
+        from livekit_wakeword_bench.sources import SOURCES
+
+        enabled = [n for n in SOURCES if n not in config.skip_sources]
+        knobs["sources"] = json.dumps(enabled)
     for word, arpabet in config.pronunciations.items():  # JSON-quoted: bench parses knobs as YAML
         knobs[f"pronunciations__{word.lower()}"] = json.dumps(arpabet)
     if hard_negatives and config.hard_negatives:
@@ -163,29 +189,75 @@ def _generate(
         knobs["tts__phonemes"] = False
         for word in unknown_words(config):
             knobs.setdefault(f"pronunciations__{word}", json.dumps("AH0"))
-    _check_tts_access(config)
-    stats = generate(
-        config.wakeword,
-        out,
-        size="small",
-        plan=config.plan,
-        splits=splits,
-        language=config.language,
-        overwrite=overwrite,
-        **knobs,
-    )
+    with _tts_backend(config):
+        if (recording := record_dir()) is not None:  # write the requests, send none
+            manifest = record_requests(
+                config,
+                out,
+                splits,
+                recording,
+                **{**knobs, "language": config.language},
+            )
+            logger.info("recorded the TTS requests for %s %s to %s", out.name, splits, manifest)
+            return
+        capture_to = capture_dir()  # send the requests as usual, write what crosses the wire
+        if capture_to is not None and config.tts != "livekit":
+            logger.warning("--capture-tts records LiveKit Inference traffic only: not capturing")
+            capture_to = None
+        with (
+            capturing(capture_to / f"tts_capture_{out.name}_{'-'.join(splits)}.jsonl")
+            if capture_to is not None
+            else nullcontext()
+        ):
+            _check_tts_access(config)
+            stats = generate(
+                config.wakeword,
+                out,
+                size="small",
+                plan=config.plan,
+                splits=splits,
+                language=config.language,
+                overwrite=overwrite,
+                **knobs,
+            )
     for split in splits:
         _check_speech(config, out, split, (stats or {}).get(split) or {})
 
 
-_TTS_OK: set[str] = set()  # languages whose test request worked in this process
+def _elevenlabs_voices(config: WakeWordConfig) -> list[dict[str, Any]]:
+    try:
+        return elevenlabs.voice_catalog(config.dataset_dir, elevenlabs.api_key())
+    except Exception as e:  # noqa: BLE001
+        raise SetupError(
+            f"could not list your ElevenLabs voices ({e}). A 401 means {elevenlabs.ENV_KEY} is "
+            "wrong or lacks Voices read access"
+        ) from None
+
+
+def _tts_backend(config: WakeWordConfig) -> AbstractContextManager[None]:
+    """Where the bench sends its TTS requests: LiveKit Inference (its own), or ElevenLabs."""
+    if config.tts == "livekit":
+        return nullcontext()
+    return _elevenlabs_backend(config)
+
+
+@contextmanager
+def _elevenlabs_backend(config: WakeWordConfig) -> Iterator[None]:
+    with elevenlabs.patched(_elevenlabs_voices(config), elevenlabs.api_key()):
+        yield
+
+
+_TTS_OK: set[str] = set()  # "<provider>:<language>" whose test request worked in this process
 
 
 def _check_tts_access(config: WakeWordConfig) -> None:
     """One TTS request before generating, so a wrong key or an exhausted quota stops setup in
     seconds: bench retries every clip, which takes about an hour to fail a whole set. Two voices
     are tried, so a single provider's hiccup does not stop setup."""
-    if config.language in _TTS_OK:
+    if f"{config.tts}:{config.language}" in _TTS_OK:
+        return
+    if config.tts == "elevenlabs":
+        _check_elevenlabs_access(config)
         return
     import asyncio
 
@@ -221,7 +293,7 @@ def _check_tts_access(config: WakeWordConfig) -> None:
     for v in voices:
         error = asyncio.run(probe(v.model, v.id))
         if error is None:
-            _TTS_OK.add(config.language)
+            _TTS_OK.add(f"livekit:{config.language}")
             return
         errors.append(f"{v.model}: {error}")
     raise SetupError(
@@ -234,6 +306,40 @@ def _check_tts_access(config: WakeWordConfig) -> None:
     )
 
 
+def _check_elevenlabs_access(config: WakeWordConfig) -> None:
+    key = elevenlabs.api_key()
+    if key is None:
+        raise SetupError(f"set {elevenlabs.ENV_KEY} (ElevenLabs TTS)")
+    errors = []
+    for v in _elevenlabs_voices(config)[:2]:
+        error = elevenlabs.probe(key, v["id"], config.wakeword, config.language)
+        if error is None:
+            _TTS_OK.add(f"elevenlabs:{config.language}")
+            return
+        errors.append(f"{v['name']}: {error}")
+    raise SetupError(
+        "ElevenLabs refused a test request ("
+        + "; ".join(errors)
+        + f"). A 401 means {elevenlabs.ENV_KEY} is wrong, lacks Text to Speech access, or your "
+        "plan is out of credits (quota_exceeded); a 429 that your plan allows fewer concurrent "
+        f'requests. Then run `livekit-wakeword setup --wakeword "{config.wakeword}"` again'
+    )
+
+
+def _tts_fix(config: WakeWordConfig) -> str:
+    again = f'run `livekit-wakeword setup --wakeword "{config.wakeword}"` again'
+    if config.tts == "elevenlabs":
+        return (
+            f"Check {elevenlabs.ENV_KEY}, your ElevenLabs credits (a 401 quota_exceeded) and "
+            "concurrency (a 429: lower `--concurrency`) and the network, then " + again
+        )
+    return (
+        "Check LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET (`lk app env -w` writes them "
+        "to .env.local), your LiveKit plan's TTS quota and the network, then "
+        f"{again} (see {QUOTA_DOCS})"
+    )
+
+
 def _check_speech(config: WakeWordConfig, out: Path, split: str, stats: dict[str, Any]) -> None:
     """Fail loudly when TTS let us down. Bench retries each request, then skips the clip and
     carries on, so a wrong or expired key, an exhausted quota or a dropped connection would
@@ -243,11 +349,7 @@ def _check_speech(config: WakeWordConfig, out: Path, split: str, stats: dict[str
     under the directory setup runs from)."""
     failed = int(stats.get("tts_failures", 0))
     rows = int(stats.get("rows", 0))
-    fix = (
-        "Check LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET (`lk app env -w` writes them "
-        "to .env.local), your LiveKit plan's TTS quota and the network, then run "
-        f'`livekit-wakeword setup --wakeword "{config.wakeword}"` again (see {QUOTA_DOCS})'
-    )
+    fix = _tts_fix(config)
     if not _done(out, split):
         raise SetupError(
             f"TTS produced no speech for {config.wakeword!r} ({out.name} {split} set: "
@@ -341,10 +443,11 @@ def run_setup(config: WakeWordConfig, eval: bool = False) -> list[str]:
         raise SetupError("cannot set up:\n  - " + "\n  - ".join(problems))
     from .encoders import encoder_dir
 
-    try:  # fetched now (once), so `train` never stops for it
-        logger.info("pretrained encoders: %s", encoder_dir("standard").parent)
-    except RuntimeError as e:
-        raise SetupError(str(e)) from None
+    if record_dir() is None:  # recording makes no downloads
+        try:  # fetched now (once), so `train` never stops for it
+            logger.info("pretrained encoders: %s", encoder_dir("standard").parent)
+        except RuntimeError as e:
+            raise SetupError(str(e)) from None
     d = config.dataset_dir
     if not phoneme_steered(config):
         logger.info("%r: generating with plain-text TTS only", config.wakeword)

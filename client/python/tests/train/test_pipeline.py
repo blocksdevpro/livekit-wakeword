@@ -35,7 +35,9 @@ def test_environment_problems_are_reported(
 
     for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
         monkeypatch.delenv(k, raising=False)
-    problems = check_environment(sample_config.model_copy(update={"plan": "nope"}))
+    problems = check_environment(
+        sample_config.model_copy(update={"plan": "nope", "tts": "livekit"})
+    )
     assert any("LIVEKIT_URL" in p for p in problems)
     assert any("unknown plan" in p for p in problems)
 
@@ -198,7 +200,7 @@ def test_cli_setup_checks_before_writing(tmp_path: Path, monkeypatch: pytest.Mon
     for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
         monkeypatch.delenv(k, raising=False)
     runner = CliRunner()
-    r = runner.invoke(cli.app, ["setup", "-w", "hey zork"])
+    r = runner.invoke(cli.app, ["setup", "-w", "hey zork", "--tts", "livekit"])
     assert r.exit_code == 1
     assert "LIVEKIT_URL" in r.output and "--pronounce" in r.output and "zork" in r.output
     assert not Path("hey_zork.yaml").exists()  # nothing written when setup cannot run
@@ -249,10 +251,11 @@ def test_generate_knobs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(livekit_wakeword_bench, "generate", lambda *a, **kw: calls.append(kw) or {})
     monkeypatch.setattr(pipeline, "_check_speech", lambda *a: None)  # nothing is generated
     monkeypatch.setattr(pipeline, "_check_tts_access", lambda config: None)
-    cfg = WakeWordConfig(wakeword="hey zork", pronunciations={"zork": "Z AO1 R K"})
+    cfg = WakeWordConfig(wakeword="hey zork", pronunciations={"zork": "Z AO1 R K"}, tts="livekit")
     pipeline._generate(cfg, tmp_path, ["train"])
     assert calls[-1]["pronunciations__zork"] == '"Z AO1 R K"' and "tts__phonemes" not in calls[-1]
-    pipeline._generate(WakeWordConfig(wakeword="xin chào", language="vi"), tmp_path, ["train"])
+    vi = WakeWordConfig(wakeword="xin chào", language="vi", tts="livekit")
+    pipeline._generate(vi, tmp_path, ["train"])
     assert calls[-1]["tts__phonemes"] is False and "pronunciations__xin" in calls[-1]
 
 
@@ -282,10 +285,15 @@ def test_hard_negatives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     from livekit.wakeword_train import pipeline
 
     zh = WakeWordConfig(
-        wakeword="嘿小机", language="zh", hard_negatives=[" 喂小机", "嘿小七", "喂小机", ""]
+        tts="livekit",
+        wakeword="嘿小机",
+        language="zh",
+        hard_negatives=[" 喂小机", "嘿小七", "喂小机", ""],
     )
     assert zh.hard_negatives == ["喂小机", "嘿小七"]
-    en = WakeWordConfig(wakeword="hey robot", hard_negatives=["hey rabbit", "hey zork"])
+    en = WakeWordConfig(
+        wakeword="hey robot", hard_negatives=["hey rabbit", "hey zork"], tts="livekit"
+    )
     assert pipeline.unknown_hard_negative_words(en) == ["zork"]
     assert any("'zork' in hard_negatives" in p for p in pipeline.phrase_problems(en))
     fixed = en.model_copy(update={"pronunciations": {"zork": "Z AO1 R K"}})
@@ -318,7 +326,8 @@ def test_hard_negatives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(pipeline, "_check_tts_access", lambda config: None)
     pipeline._generate(zh, tmp_path, ["train"])
     assert yaml.safe_load(str(calls[-1]["hard_negatives"])) == ["喂小机", "嘿小七"]
-    pipeline._generate(WakeWordConfig(wakeword="hola", language="es"), tmp_path, ["train"])
+    es = WakeWordConfig(wakeword="hola", language="es", tts="livekit")
+    pipeline._generate(es, tmp_path, ["train"])
     assert "hard_negatives" not in calls[-1]
     pipeline._generate(en, tmp_path, ["train"])  # English: with its automatic confusables
     assert yaml.safe_load(str(calls[-1]["hard_negatives"])) == ["hey rabbit", "hey zork"]
@@ -426,7 +435,9 @@ def test_setup_fails_loudly_on_tts_failures(
     )
     monkeypatch.setattr(livekit_wakeword_bench, "generate", generate)
     monkeypatch.setattr(pipeline, "_check_tts_access", lambda config: None)
-    zh = WakeWordConfig(wakeword="你好万事通", language="zh", data_dir=tmp_path / "data")
+    zh = WakeWordConfig(
+        wakeword="你好万事通", language="zh", data_dir=tmp_path / "data", tts="livekit"
+    )
     with pytest.raises(pipeline.SetupError, match=match) as e:
         pipeline.run_setup(zh)
     assert "LIVEKIT_API_KEY" in str(e.value) and "quota" in str(e.value)
@@ -454,7 +465,9 @@ def test_setup_keeps_speech_without_tts_failures(
     )
     monkeypatch.setattr(livekit_wakeword_bench, "generate", generate)
     monkeypatch.setattr(pipeline, "_check_tts_access", lambda config: None)
-    zh = WakeWordConfig(wakeword="你好万事通", language="zh", data_dir=tmp_path / "data")
+    zh = WakeWordConfig(
+        wakeword="你好万事通", language="zh", data_dir=tmp_path / "data", tts="livekit"
+    )
     assert pipeline.run_setup(zh) == [str(zh.dataset_dir / "natural")]
 
 
@@ -482,6 +495,28 @@ def test_setup_stops_fast_when_tts_refuses(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(pipeline, "_TTS_OK", set())
     monkeypatch.setattr(inference, "TTS", Refused)
     monkeypatch.setattr(livekit_wakeword_bench, "generate", generate)
-    zh = WakeWordConfig(wakeword="你好万事通", language="zh")
+    zh = WakeWordConfig(wakeword="你好万事通", language="zh", tts="livekit")
     with pytest.raises(pipeline.SetupError, match=r"refused a test request.*401.*LIVEKIT_API_KEY"):
         pipeline._generate(zh, tmp_path, ["train"])
+
+
+def test_bench_skips_gated_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bench downloads every source unless told which to use (ESC-50 is gated)."""
+    import json
+
+    import livekit_wakeword_bench
+    from livekit_wakeword_bench.sources import SOURCES
+
+    from livekit.wakeword_train import pipeline
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(livekit_wakeword_bench, "generate", lambda *a, **kw: calls.append(kw) or {})
+    monkeypatch.setattr(pipeline, "_check_speech", lambda *a: None)  # nothing is generated
+    monkeypatch.setattr(pipeline, "_check_tts_access", lambda config: None)
+    cfg = WakeWordConfig(wakeword="hey zork", tts="livekit")
+    pipeline._generate(cfg, tmp_path, ["train"])
+    enabled = json.loads(str(calls[-1]["sources"]))
+    assert {"esc50", "gtzan"}.isdisjoint(enabled) and {"musan_noise", "mit_rir"} <= set(enabled)
+    assert set(enabled) == set(SOURCES) - {"esc50", "gtzan"}
+    pipeline._generate(cfg.model_copy(update={"skip_sources": []}), tmp_path, ["train"])
+    assert "sources" not in calls[-1]  # [] means every source

@@ -53,7 +53,9 @@ uv run livekit-wakeword setup|train|eval|listen  # the CLI
 
 - Exported models are plain detectors: the phrase conditioning is folded into weights at `bake`,
   so runtimes never see the text encoder.
-- Data generation goes only through livekit-wakeword-bench (no in-repo TTS).
+- Data generation goes only through livekit-wakeword-bench. Its speech comes from ElevenLabs by
+  default (`wakeword_train/elevenlabs.py` swaps the bench's voices and synthesizer for the
+  ElevenLabs REST API) or from LiveKit Inference (`tts: livekit`, the bench's own).
 - Formats: standard is ONNX (onnxruntime in Python/Swift/JS, pure-Rust tract in the Rust SDK; the
   trainer's tests check exports load in tract), micro is int8 TFLite (TFLite Micro).
 - No v1 compatibility: clients load streaming models only.

@@ -123,12 +123,16 @@ false alarms per hour on the bench's conversational speech; raise the threshold 
 
 ## Train a wake word
 
-You need a CUDA GPU or an Apple silicon Mac, [uv](https://docs.astral.sh/uv/) and a LiveKit Cloud project
-for speech generation through LiveKit Inference TTS. Allow for a few thousand clips per phrase; see
+You need a CUDA GPU or an Apple silicon Mac, [uv](https://docs.astral.sh/uv/) and, for speech
+generation, an [ElevenLabs API key](https://elevenlabs.io/app/settings/api-keys) (the default:
+`export ELEVENLABS_API_KEY=...`, see
+[ElevenLabs TTS](https://github.com/livekit/livekit-wakeword/blob/main/client/python/TRAINING.md#elevenlabs-tts))
+or a LiveKit Cloud project for LiveKit Inference TTS (`setup --tts livekit`, step 1 below). Allow for a few thousand clips per phrase; see
 [LiveKit usage and quota](https://github.com/livekit/livekit-wakeword/blob/main/client/python/TRAINING.md#livekit-usage-and-quota)
 for usage estimates and help with TTS errors during `setup`.
 
-**1. Get LiveKit credentials.** Sign up at [cloud.livekit.io](https://cloud.livekit.io) and create a
+**1. Get LiveKit credentials** (only with `--tts livekit`; with ElevenLabs, export
+`ELEVENLABS_API_KEY` and skip to step 2). Sign up at [cloud.livekit.io](https://cloud.livekit.io) and create a
 project, then install the [LiveKit CLI](https://docs.livekit.io/reference/developer-tools/livekit-cli/)
 and log in:
 

@@ -22,12 +22,13 @@ if __name__ == "__main__":  # required: training starts worker processes (spawne
 
 ## What each step does
 
-1. **`setup`** checks the environment (Python 3.12+, LiveKit credentials, disk), downloads the
+1. **`setup`** checks the environment (Python 3.12+, TTS credentials, disk), downloads the
    pretrained encoders once (37 MB, checksum verified, cached under
    `~/.cache/livekit-wakeword/encoders`), writes the default config `<name>.yaml` if there is
    none, and generates speech for the phrase with
-   [livekit-wakeword-bench](https://github.com/livekit/wakeword-bench) through LiveKit Inference
-   TTS: the phrase in many voices, close-sounding confusables (your `hard_negatives`, plus
+   [livekit-wakeword-bench](https://github.com/livekit/wakeword-bench), spoken by
+   [ElevenLabs](#elevenlabs-tts) (the default) or LiveKit Inference TTS (`--tts livekit`): the
+   phrase in many voices, close-sounding confusables (your `hard_negatives`, plus
    automatic ones in English) and everyday sentences. It is
    cached under `~/.cache/livekit-wakeword/datasets/<name>` (or `data_dir`). Later runs reuse it
    when its settings match; changing the clip counts, pronunciations or `hard_negatives`
@@ -62,8 +63,9 @@ from the same directory so they can find the settings saved by `setup`. Each com
 | `setup` | `--language`, `-l` | Language of the phrase (ISO 639-1, such as `es` or `ja`); defaults to `en` for a new config. See [multilingual wake words](../../README.md#train-a-wake-word). |
 | `setup` | `--pronounce WORD=ARPABET` | Pronunciation of an English word outside the dictionary, such as `"zork=Z AO1 R K"`; repeat for several words. Saved in the config. |
 | `setup` | `--hard-negative PHRASE` | A close-sounding phrase the model must not fire on, such as `"hey rabbit"` or `"喂小机"`; repeat for several. Added to `hard_negatives` in the config. |
+| `setup` | `--tts` | Who speaks the clips: `elevenlabs` (default, needs `ELEVENLABS_API_KEY`) or `livekit` (LiveKit Inference). Saved in the config. |
 | `setup` | `--plan` | TTS concurrency preset: `build` (5 requests), `ship` (20), or `scale` (50). Defaults to `build` for a new config. |
-| `setup` | `--concurrency` | Concurrent TTS requests; overrides the plan's preset. |
+| `setup` | `--concurrency` | Concurrent TTS requests; overrides the plan's preset. With ElevenLabs the default is 2 (the free plan's limit): set your plan's. |
 | `setup` | `--clips N` | Multiply the default training clip counts by `N`; accepts decimals of at least `0.1`. |
 | `setup` | `--eval` | Also generate the held-out test set. |
 | `train` | `--type`, `-t` | `standard` (default) exports ONNX; `micro` exports int8 TFLite and a host ONNX model. |
@@ -135,6 +137,7 @@ same directory without additional flags.
 | `language` | `en` | TTS voices; phrases can be in any language and script |
 | `pronunciations` | none | ARPAbet for English words outside the dictionary, e.g. `zork: Z AO1 R K` (`setup --pronounce`) |
 | `hard_negatives` | none | close-sounding phrases the model must not fire on, e.g. `[hey rabbit]` or `[喂小机, 嘿小七]` (`setup --hard-negative`); English adds automatic ones, other languages have only these. English words outside the dictionary need `pronunciations`. Run `setup` after changing them |
+| `skip_sources` | `[esc50, gtzan]` | livekit-wakeword-bench sources not to download. ESC-50 and GTZAN are gated on Hugging Face (manual approval) and only add noise to the `--eval` test set. Use `[]` to use all of them, once you have access |
 | `plan` / `concurrency` | `build` / none | LiveKit plan sets concurrent TTS requests (build 5, ship 20, scale 50); `concurrency` overrides it |
 | `n_positive`, `n_confusable`, `n_sentence` | 500, 500, 150 | generated clips per category (`--clips` scales all three; `n_positive` doubles for phrases with no plain-text positives, e.g. brand names) |
 | `steps`, `micro_steps` | 5000, 5000 | fine-tuning steps |
@@ -152,9 +155,54 @@ On an Apple silicon Mac, training runs on the GPU (MPS). On an M4 Pro a standard
 about 36 minutes after the same speech generation, and a micro model about 1.5 hours more
 (0.87 s per training step, plus about 6 minutes for the TFLite export).
 
+## ElevenLabs TTS
+
+By default the speech comes from the [ElevenLabs API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert)
+with your own key; nothing is sent to LiveKit. The bench still plans every clip (texts, voices,
+speeds, held-out test voices) and builds the datasets (noise, rooms, augmentation), so the
+training sets have the same shape as with LiveKit Inference.
+
+```bash
+export ELEVENLABS_API_KEY=sk_...                  # PowerShell: $env:ELEVENLABS_API_KEY = "sk_..."
+livekit-wakeword setup --wakeword "hey robot" --eval --concurrency 5   # your plan's limit
+```
+
+The key needs Text to Speech and Voices (read) access
+([API keys](https://elevenlabs.io/app/settings/api-keys)).
+
+- **Voices:** every voice in your account (`GET /v1/voices`: the default voices plus any you
+  added from the Voice Library). More voices make a more robust model, so add a few dozen
+  varied ones from the Voice Library before the first `setup`. The list is saved as
+  `elevenlabs_voices.json` next to the datasets, so the held-out test voices stay the same
+  between `setup` and `eval`; delete it (and the datasets) to pick up new voices. Test voices
+  are held out by speaker, on every model.
+- **Models:** the wake phrase is steered with its exact ARPAbet pronunciation through
+  `<phoneme alphabet="cmu-arpabet">` tags, which only `eleven_flash_v2` reads (English).
+  Plain-text clips, and phrases in other languages, also use `eleven_multilingual_v2` and
+  `eleven_flash_v2_5`. The list is `MODELS` in `livekit/wakeword_train/elevenlabs.py`.
+- **Speed:** `voice_settings.speed`, kept within ElevenLabs' 0.7 to 1.2.
+- **Usage:** ElevenLabs bills per character. `setup --eval` with the default clip counts sends
+  about 3,100 requests and 45,000 characters for a short phrase like "hey robot", nearly all of
+  it on Flash v2, which costs fewer credits per character than Multilingual v2; check your
+  plan's [credits](https://elevenlabs.io/pricing). `--clips 0.1` makes a small trial run.
+- **Concurrency:** 2 requests at a time unless you set `--concurrency` (Starter 3, Creator 5,
+  Pro 10 at the time of writing). Over the limit, ElevenLabs answers 429 and the request waits
+  and retries.
+- **Errors:** `setup` sends one test request first, so a wrong key or no credits stops it within
+  seconds (`ElevenLabs refused a test request (... 401 ...)`). A 401 `quota_exceeded` during
+  generation fails the remaining clips at once; the incomplete set is removed, successful clips
+  stay cached in `.cache/lkwb/`, and running `setup` again requests only the missing ones.
+- `--record-tts DIR` writes the planned ElevenLabs requests without sending any (it needs the
+  key only to list your voices the first time). `--capture-tts` records LiveKit Inference
+  traffic only.
+
+To go back to LiveKit Inference, run `setup --tts livekit` (or set `tts: livekit` in
+`<name>.yaml`); see below.
+
 ## LiveKit usage and quota
 
-Speech generation uses LiveKit Inference TTS with your LiveKit Cloud project credentials.
+With `--tts livekit`, speech generation uses LiveKit Inference TTS with your LiveKit Cloud
+project credentials.
 With the default settings, each phrase needs about 1,650 training clips and another 1,150
 for the held-out test set (`--eval`). `--clips N` scales the training counts only; actual counts
 can be lower for languages without automatic confusables when no `hard_negatives` are supplied.
@@ -198,8 +246,9 @@ After addressing the error, rerun the same `setup` command from the same directo
 ## Requirements
 
 - A CUDA GPU or an Apple silicon Mac.
-- LiveKit Cloud credentials (`LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`) and sufficient
-  TTS allowance. See [Get LiveKit credentials](../../README.md#train-a-wake-word) and
+- An ElevenLabs API key (`ELEVENLABS_API_KEY`) with enough credits (see
+  [ElevenLabs TTS](#elevenlabs-tts)), or, with `--tts livekit`, LiveKit Cloud credentials
+  (`LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`) and sufficient TTS allowance. See [Get LiveKit credentials](../../README.md#train-a-wake-word) and
   [LiveKit usage and quota](#livekit-usage-and-quota).
 - Python 3.12+ for dataset generation (`livekit-wakeword-bench`).
 - Network access for the one-time encoder download from the GitHub release. To use your own copy

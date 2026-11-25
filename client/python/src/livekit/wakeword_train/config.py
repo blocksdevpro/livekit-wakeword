@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ModelType = Literal["standard", "micro"]
+TTSProvider = Literal["elevenlabs", "livekit"]
 PLANS = ("build", "ship", "scale")  # LiveKit Cloud plans: 5 / 20 / 50 concurrent TTS requests
 CACHE = Path.home() / ".cache" / "livekit-wakeword"
 
@@ -66,10 +67,24 @@ class WakeWordConfig(BaseModel):
         None, description="Where generated speech lives (default: the cache, per wake word)"
     )
 
-    # dataset generation (LiveKit Inference TTS through livekit-wakeword-bench)
+    # dataset generation (livekit-wakeword-bench; speech from ElevenLabs or LiveKit Inference)
+    tts: TTSProvider = Field(
+        "elevenlabs",
+        description="Who speaks the clips: elevenlabs (ELEVENLABS_API_KEY) or livekit "
+        "(LiveKit Inference: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)",
+    )
+    skip_sources: list[str] = Field(
+        default_factory=lambda: ["esc50", "gtzan"],
+        description="livekit-wakeword-bench noise, room and speech sources to leave out: the "
+        "gated Hugging Face datasets (ESC-50, GTZAN) need approval; they only add noise to the "
+        "test set. [] uses all of them",
+    )
     plan: str = Field("build", description="LiveKit plan: build / ship / scale (TTS concurrency)")
     concurrency: int | None = Field(
-        None, ge=1, description="Concurrent TTS requests; overrides `plan` (e.g. enterprise)"
+        None,
+        ge=1,
+        description="Concurrent TTS requests; overrides `plan` (livekit) or the default of 2 "
+        "(elevenlabs: your plan's limit, e.g. Creator 5, Pro 10)",
     )
     n_positive: int = Field(
         500, ge=1, description="Wake word clips per dataset (x2 when there are no plain-text ones)"

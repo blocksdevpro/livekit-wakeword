@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +28,11 @@ console = Console()
 class Kind(StrEnum):
     standard = "standard"
     micro = "micro"
+
+
+class TTS(StrEnum):
+    elevenlabs = "elevenlabs"
+    livekit = "livekit"
 
 
 class Plan(StrEnum):
@@ -111,13 +117,22 @@ def setup(
     wakeword: str | None = WAKEWORD,
     config_path: Path | None = CONFIG,
     language: str | None = typer.Option(None, "--language", "-l", help="Language of the phrase"),
+    tts: TTS | None = typer.Option(
+        None,
+        "--tts",
+        help="Who speaks the clips: elevenlabs (default; ELEVENLABS_API_KEY) or livekit "
+        "(LiveKit Inference; saved in the config)",
+    ),
     plan: Plan | None = typer.Option(
         None,
         "--plan",
         help="LiveKit plan, sets TTS concurrency: build (5) / ship (20) / scale (50)",
     ),
     concurrency: int | None = typer.Option(
-        None, "--concurrency", help="Concurrent TTS requests (overrides --plan, e.g. enterprise)"
+        None,
+        "--concurrency",
+        help="Concurrent TTS requests (overrides --plan; ElevenLabs default 2: set your plan's "
+        "limit, e.g. Creator 5, Pro 10)",
     ),
     clips: float | None = typer.Option(
         None,
@@ -137,10 +152,31 @@ def setup(
         help='A close-sounding phrase the model must not fire on, e.g. "hey rabbit" or "喂小机" '
         "(repeatable; added to the config; English also gets its own)",
     ),
+    record_tts: Path | None = typer.Option(
+        None,
+        "--record-tts",
+        help="Write the TTS requests setup would send to DIR (JSONL) instead of sending them: "
+        "no LiveKit credentials needed, no speech generated",
+    ),
+    capture_tts: Path | None = typer.Option(
+        None,
+        "--capture-tts",
+        help="Generate speech as usual and write every TTS request and response (websocket "
+        "messages, options, audio format, timing; never your keys) to DIR (JSONL). Spends TTS "
+        "quota: combine with --clips 0.1",
+    ),
 ) -> None:
     """Check the environment, write the config (<name>.yaml) and generate the datasets."""
+    from . import capture, record
     from .config import WakeWordConfig, default_config_path
     from .pipeline import SetupError, check_environment, run_setup
+
+    if record_tts is not None and capture_tts is not None:
+        raise typer.BadParameter("--record-tts sends nothing, --capture-tts sends: pick one")
+    if record_tts is not None:
+        os.environ[record.ENV_VAR] = str(record_tts)
+    if capture_tts is not None:
+        os.environ[capture.ENV_VAR] = str(capture_tts)
 
     counts: dict[str, int] = {}
     if clips is not None:  # a multiple of the default clip counts
@@ -159,6 +195,7 @@ def setup(
         wakeword,
         config_path,
         language=language,
+        tts=tts.value if tts else None,
         plan=plan.value if plan else None,
         concurrency=concurrency,
         **counts,
