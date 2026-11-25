@@ -32,6 +32,24 @@ jobs:
       - run: uv run --no-sync pytest client/python/tests --ignore=client/python/tests/train --tb=short -q
       - run: swift test
 
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev  # cpal (listener feature)
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/rust
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+
   js:
     runs-on: ubuntu-latest
     defaults:

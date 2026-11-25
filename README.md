@@ -9,6 +9,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/livekit/livekit-wakeword/tree/main/client/python)
 [![Swift](https://img.shields.io/badge/swift-iOS%20%7C%20macOS-orange)](https://github.com/livekit/livekit-wakeword/tree/main/client/swift)
 [![JavaScript](https://img.shields.io/badge/js-browser%20%7C%20Node-yellow)](https://github.com/livekit/livekit-wakeword/tree/main/client/js)
+[![Rust](https://img.shields.io/badge/rust-tract-orange)](https://github.com/livekit/livekit-wakeword/tree/main/client/rust)
 [![ESP32](https://img.shields.io/badge/ESP32-TFLite%20Micro-red)](https://github.com/livekit/livekit-wakeword/tree/main/client/esp32)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/livekit/livekit-wakeword/blob/main/LICENSE)
 
@@ -18,7 +19,7 @@
 
 LiveKit WakeWord is an open-source toolkit for training and running wake word models. You provide
 a phrase, and the training CLI generates speech with LiveKit Inference TTS and adapts a pretrained
-encoder to recognize it. The resulting model runs locally in Python, Swift, JavaScript (browser and Node) or on an ESP32, without
+encoder to recognize it. The resulting model runs locally in Python, Swift, JavaScript (browser and Node), Rust or on an ESP32, without
 sending audio to a server. You do not need to record your own training data.
 
 > [!IMPORTANT]
@@ -97,6 +98,7 @@ run. Use a [ready-made model](#models) or one you trained yourself.
 | Python | [Python README](https://github.com/livekit/livekit-wakeword/blob/main/client/python/README.md) | [Audio clip inference](https://github.com/livekit/livekit-wakeword/blob/main/client/python/examples/inference.py) · [Microphone listener](https://github.com/livekit/livekit-wakeword/blob/main/client/python/examples/listener.py) |
 | Swift | [Swift README](https://github.com/livekit/livekit-wakeword/blob/main/client/swift/README.md) | [SwiftUI demo for iOS and macOS, with setup instructions](https://github.com/livekit/livekit-wakeword/blob/main/client/swift/Example/README.md) |
 | JavaScript | [JavaScript README](https://github.com/livekit/livekit-wakeword/blob/main/client/js/README.md) | [Browser demo with a live score meter](https://github.com/livekit/livekit-wakeword/tree/main/client/js/example) |
+| Rust | [Rust README](https://github.com/livekit/livekit-wakeword/blob/main/client/rust/README.md) | [Audio clip inference](https://github.com/livekit/livekit-wakeword/blob/main/client/rust/examples/inference.rs) · [Microphone listener](https://github.com/livekit/livekit-wakeword/blob/main/client/rust/examples/listen.rs) |
 | ESP32 | [ESP32 README](https://github.com/livekit/livekit-wakeword/blob/main/client/esp32/README.md) | [I2S microphone detection](https://github.com/livekit/livekit-wakeword/tree/main/client/esp32/examples/i2s_mic) · [Wake word to LiveKit agent](https://github.com/livekit/livekit-wakeword/tree/main/client/esp32/examples/livekit_agent) · [Build and flash instructions](https://github.com/livekit/livekit-wakeword/blob/main/client/esp32/README.md#examples) |
 
 ## Models
@@ -230,6 +232,7 @@ evaluation.
 | [`client/python/`](https://github.com/livekit/livekit-wakeword/tree/main/client/python) | Python client (`livekit.wakeword`: `WakeWordModel`, `WakeWordListener`) and the trainer behind the `livekit-wakeword` CLI (`livekit.wakeword_train`, the `train` extra: generates speech with LiveKit Inference TTS, trains, calibrates and evaluates; [training guide](https://github.com/livekit/livekit-wakeword/blob/main/client/python/TRAINING.md)) |
 | [`client/swift/`](https://github.com/livekit/livekit-wakeword/tree/main/client/swift) | Swift package for iOS and macOS, plus a SwiftUI demo |
 | [`client/js/`](https://github.com/livekit/livekit-wakeword/tree/main/client/js) | JavaScript/TypeScript package `@livekit/wakeword` for the browser (onnxruntime-web) and Node (onnxruntime-node), plus a browser demo |
+| [`client/rust/`](https://github.com/livekit/livekit-wakeword/tree/main/client/rust) | Rust crate `livekit-wakeword` (pure-Rust inference with tract), with a microphone listener behind the `listener` feature |
 | [`client/esp32/`](https://github.com/livekit/livekit-wakeword/tree/main/client/esp32) | ESP-IDF component and examples for micro models |
 | [`models/`](https://github.com/livekit/livekit-wakeword/tree/main/models) | The hey livekit models the tests and examples use |
 
@@ -241,6 +244,7 @@ uv run pytest                                    # Python: client and trainer
 uv run ruff check . && uv run mypy -p livekit.wakeword -p livekit.wakeword_train
 swift test                                       # Swift client
 (cd client/js && pnpm install && pnpm test)      # JavaScript client
+(cd client/rust && cargo test)                   # Rust client
 ```
 
 ## License

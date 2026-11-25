@@ -3,6 +3,7 @@
 #   pyproject.toml                                    the livekit-wakeword Python package
 #   client/esp32/livekit_wakeword/idf_component.yml   the ESP32 component
 #   client/js/package.json                            the @livekit/wakeword npm package
+#   client/rust/Cargo.toml                            the livekit-wakeword Rust crate
 # (Swift Package Manager versions come from the git tag.) Commit the result in a
 # "Release vX.Y.Z" PR; the publish workflow checks that the pushed tag matches.
 # Usage: scripts/update_version.sh <version>
@@ -31,6 +32,8 @@ edit "$REPO_ROOT/pyproject.toml" "s/^version = \".*\"/version = \"$VERSION\"/"
 edit "$REPO_ROOT/client/esp32/livekit_wakeword/idf_component.yml" \
     "s/^version: \".*\"/version: \"$VERSION\"/"
 edit "$REPO_ROOT/client/js/package.json" "s/^  \"version\": \".*\"/  \"version\": \"$VERSION\"/"
+# the package version is the first `version = ` line (dependency tables come later)
+edit "$REPO_ROOT/client/rust/Cargo.toml" "1,/^version = /s/^version = \".*\"/version = \"$VERSION\"/"
 
 (cd "$REPO_ROOT" && uv lock)
 echo "updated $REPO_ROOT/uv.lock"

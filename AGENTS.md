@@ -29,6 +29,12 @@ ONNX) and micro (int8 TFLite).
   AudioWorklet `WakeWordListener` in `listener.ts`), `node.ts` (onnxruntime-node), `core.ts`,
   `resample.ts` (port of the Python resampler); `example/` Vite demo; tests check scores step by
   step against the Python client (`scripts/make_parity.py` -> `test/fixtures/parity.json`).
+- **`client/rust/`**: crate `livekit-wakeword` (standalone Cargo package, tract backend: pure Rust):
+  `src/model.rs` (`WakeWordModel`), `stream.rs` (one model's streaming state on tract),
+  `resample.rs` (port of the Python resampler), `gate.rs` (`DetectionGate`), `listener.rs` (cpal
+  `WakeWordListener`, behind the `listener` feature); `examples/` (`inference`, `listen`); tests
+  check scores against the Python client (`client/js/test/fixtures/parity.json`,
+  `streaming_tiny_expected.json`).
 - **`client/esp32/`**: ESP-IDF component `livekit_wakeword/` (the only copy of the C front end and
   TFLM wrapper), `examples/`, `tools/` (host test, front-end CLI, table generator).
 - **`models/`**: hey livekit standard + micro, used by tests and examples.
@@ -46,6 +52,7 @@ uv run mypy -p livekit.wakeword -p livekit.wakeword_train
 swift test                                       # Swift client
 cd client/js && pnpm install && pnpm lint && pnpm typecheck && pnpm test   # JS client
 (cd client/js && pnpm test:browser)              # JS listener in headless Chromium
+cd client/rust && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features   # Rust client
 uv run livekit-wakeword setup|train|eval|listen  # the CLI
 ```
 
@@ -64,7 +71,8 @@ uv run livekit-wakeword setup|train|eval|listen  # the CLI
 
 - Versions are cut with a PR, then a tag
   - Run `scripts/update_version.sh X.Y.Z` (or `X.Y.Z-rc.N`): it bumps the Python package, the
-    ESP32 component, the npm package (`client/js/package.json`) and `uv.lock`
+    ESP32 component, the npm package (`client/js/package.json`), the Rust crate
+    (`client/rust/Cargo.toml`) and `uv.lock`
   - Open a PR (e.g., "Release v2.1.0") with the bumped version and merge it
   - Publish a GitHub release on the merge commit with tag `vX.Y.Z` (mark `-rc.N` tags as
     pre-releases), include the automatically generated changelog, and attach the ready-made

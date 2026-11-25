@@ -18,6 +18,7 @@ uv run mypy -p livekit.wakeword -p livekit.wakeword_train     # types
 uv run pytest                                                 # client + trainer tests
 swift test                                                    # Swift client (macOS)
 (cd client/js && pnpm install && pnpm lint && pnpm typecheck && pnpm test)  # JS client
+(cd client/rust && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features)  # Rust client
 ```
 
 Changes to the ESP32 component (`client/esp32`) should build both examples for the ESP32-S3 and
